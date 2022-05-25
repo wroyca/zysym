@@ -32,5 +32,6 @@ function(target_vcxproj_filters target)
     endforeach()
 endfunction()
 
+add_subdirectory(externals)
 add_subdirectory(src)
 
