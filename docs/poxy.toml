@@ -1,0 +1,11 @@
+# this is a config file for Poxy - a Doxygen + m.css front-end written in Python.
+# https://github.com/marzer/poxy
+
+name = 'ZySym'
+github = 'wroyca/ZySym'
+license = [ 'GPLv3', 'https://github.com/wroyca/ZySym/blob/main/LICENSE' ]
+
+[sources]
+patterns = [ '*' ]
+recursive_paths = [ '../src', '../include ]
+extract_all = true
