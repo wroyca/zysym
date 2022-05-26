@@ -40,7 +40,7 @@ auto get_data_from_pdb(const std::wstring &pdb)
   }
 }
 
-auto get_symbol_from_name(const wchar_t *sym_name, enum SymTagEnum sym_tag)
+auto get_symbol_by_name(const wchar_t *sym_name, enum SymTagEnum sym_tag)
 {
   assert(wcscmp(sym_name, L"") != 0);
 

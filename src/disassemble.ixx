@@ -1,8 +1,19 @@
 module;
 
-#include <Zydis/Zydis.h>
 #include <LIEF/LIEF.hpp>
 
+#include <dia2.h>
+#include <diacreate.h>
+#include <atlcomcli.h>
+#include <comdef.h>
+#include <comutil.h>
+
+#include <Zydis/Zydis.h>
+#include <Zycore/Format.h>
+
+#include <string>
+#include <iostream>
+#include <format>
 #include <fstream>
 
 import dia;
@@ -34,6 +45,39 @@ auto zydis_decode_immediate(const ZydisFormatter *formatter, ZydisFormatterBuffe
 
 auto zydis_decode_absolute(const ZydisFormatter *formatter, ZydisFormatterBuffer *buffer, ZydisFormatterContext *context) -> ZyanStatus
 {
+  ZyanU64 address;
+  ZYAN_CHECK(ZydisCalcAbsoluteAddress(context->instruction, context->operand, context->runtime_address, &address));
+  CComPtr<IDiaSymbol> symbol;
+
+  // name is allocated by get_name, so we copy the underlying C
+  // string and free the memory.
+  auto Helper = [&](auto offset) {
+    wchar_t* name = L""; symbol->get_name(&name); std::wstring copy = name; SysFreeString(name);
+    ZYAN_CHECK(ZydisFormatterBufferAppend(buffer, ZYDIS_TOKEN_SYMBOL));
+    ZyanString* string;
+    ZYAN_CHECK(ZydisFormatterBufferGetString(buffer, &string));
+    return ZyanStringAppendFormat(string, offset == 0 ? "%ls" : "%ls+0x%s", copy.c_str(), std::format("{:x}", offset).c_str());
+  };
+
+  // For SymTagFunction, we don't need to do anything special. We can just use the address.
+  if (context->instruction->mnemonic == ZYDIS_MNEMONIC_CALL) {
+    if (SUCCEEDED(dia_session->findSymbolByRVA(address, SymTagFunction, &symbol)) && symbol != nullptr) {
+      return Helper(0);
+    }
+  }
+
+  // Substract the imagebase to get the RVA. This is the address we want to look up.
+  if (address -= 0x00400000; address < 0xFFFFFFFF) {
+    if (SUCCEEDED(dia_session->findSymbolByRVA(address, SymTagData, &symbol)) && symbol != nullptr) {
+      // Calculate the struct offset discarded by dia. We do this by
+      // subtracting the difference between the address and the
+      // symbol's address. This is only possible because dia always
+      // returns the symbol's base address.
+      auto rva = 0ul; symbol->get_relativeVirtualAddress(&rva); auto offset = address - rva;
+      return Helper(offset);
+    }
+  }
+
   return ZydisDecodeAbsolute(formatter, buffer, context);
 }
 
@@ -41,11 +85,11 @@ auto zydis_decode_absolute(const ZydisFormatter *formatter, ZydisFormatterBuffer
 
 auto zydis_decode(std::wstring pdb, const wchar_t *sym_name)
 {
-  auto [address, length] = get_symbol_from_name(sym_name, SymTagFunction);
+  auto [address, length] = get_symbol_by_name(sym_name, SymTagFunction);
 
-  auto binary = pdb.substr(0, pdb.find_last_of('.')) + L".exe";
-  auto output = pdb.substr(0, pdb.find_last_of('.')) + L".txt";
-  auto parser = LIEF::PE::Parser::parse(std::string(binary.begin(), binary.end()).c_str());
+  auto binary  = pdb.substr(0, pdb.find_last_of('.')) + L".exe";
+  auto output  = pdb.substr(0, pdb.find_last_of('.')) + L".txt";
+  auto parser  = LIEF::PE::Parser::parse(std::string(binary.begin(), binary.end()).c_str());
   auto content = parser->get_content_from_virtual_address(address, length, LIEF::Binary::VA_TYPES::RVA);
 
   ZydisDecoder decoder;
@@ -54,12 +98,12 @@ auto zydis_decode(std::wstring pdb, const wchar_t *sym_name)
   ZydisFormatter formatter;
   ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
 
-  ZydisDecodeAbsolute = &zydis_decode_absolute;
+  ZydisDecodeAbsolute = (ZydisFormatterFunc)&zydis_decode_absolute;
   ZydisFormatterSetHook(&formatter, ZYDIS_FORMATTER_FUNC_PRINT_ADDRESS_ABS, (const void**)&ZydisDecodeAbsolute);
-  ZydisDecodeImmediate = &zydis_decode_immediate;
-  ZydisFormatterSetHook(&formatter, ZYDIS_FORMATTER_FUNC_PRINT_ADDRESS_ABS, (const void**)&ZydisDecodeImmediate);
-  ZydisDecodeRegister = &zydis_decode_register;
-  ZydisFormatterSetHook(&formatter, ZYDIS_FORMATTER_FUNC_PRINT_ADDRESS_ABS, (const void**)&ZydisDecodeRegister);
+//ZydisDecodeRegister = (ZydisFormatterFunc)&zydis_decode_register;
+//ZydisFormatterSetHook(&formatter, ZYDIS_FORMATTER_FUNC_PRINT_REGISTER, (const void**)&ZydisDecodeRegister);
+//ZydisDecodeImmediate = &zydis_decode_immediate;
+//ZydisFormatterSetHook(&formatter, ZYDIS_FORMATTER_FUNC_PRINT_IMM, (const void**)&ZydisDecodeImmediate);
 
   ZyanU8* data = &content[0];
   ZyanU64 runtime_address = address;
